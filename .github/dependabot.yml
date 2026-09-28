@@ -1,0 +1,17 @@
+# Dependabot: the only dependency surface here is the CI workflow's actions (zero-dependency Bun
+# scripts, no package.json/lockfile — add a `bun` entry if that ever changes).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Bundle everything: one PR for the week's version bumps, one for any security bumps
+    # (Dependabot keeps those two streams separate, so each needs its own group).
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
