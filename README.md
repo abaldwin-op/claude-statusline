@@ -14,10 +14,11 @@ Each row is width-aware: it packs onto one line when it fits, wraps to aligned c
 lines when it doesn't, and gauges drop their progress bar before anything gets truncated.
 Height adapts to your terminal, taking at most a third of it — Claude Code needs the rest for
 the conversation, prompt, and its own footer. On a tall window rows wrap freely (nothing
-truncated); as the window shortens, wrapped detail is cut with a trailing `…` first, then whole
-rows are shed (least-essential first, the Model/Limits gauges last) so the dashboard never
-pushes Claude Code's own footer off the bottom. Within one window size the height only ratchets
-up, never down, so Claude Code's repaint never leaves ghost rows behind.
+truncated); as the window shortens, wrapped rows first fall back to their compact forms (no bars,
+no scope parentheticals) so every item still fits, then anything left over is cut with a trailing
+`…`, then whole rows are shed (least-essential first, the Model/Limits gauges last) so the
+dashboard never pushes Claude Code's own footer off the bottom. Within one window size the height
+only ratchets up, never down, so Claude Code's repaint never leaves ghost rows behind.
 
 - **Model** — model name (⚡ when fast mode is on), reasoning effort (styled to echo Claude
   Code's `/effort` menu) with a 💡 lamp when extended thinking is on, and a context-window gauge
@@ -131,11 +132,14 @@ required to run the status line anyway), so it works the same on Windows, macOS,
 
 ```bash
 cd claude-statusline
-bun install.js          # add --print to preview the changes without writing
+bun install.js              # add --print to preview the changes without writing
+bun install.js --uninstall  # later: remove the blocks that point at this checkout
 ```
 
 It points Claude Code's `statusLine` and `subagentStatusLine` at these scripts, backs up any
 existing `settings.json`, and preserves your other keys. Restart Claude Code to see it.
+`--uninstall` is the mirror image: it clears only blocks that point at this checkout (a status
+line configured elsewhere is left alone) and takes the same `.bak` backup first.
 
 ### Manual setup
 
@@ -187,15 +191,39 @@ A couple of optional environment variables:
 | --- | --- | --- |
 | `CLAUDE_STATUSLINE_TRANSCRIPT_BYTES` | `1048576` (1 MiB) | How many trailing bytes of the transcript to parse per render. |
 | `CLAUDE_STATUSLINE_MANAGED_DIR` | platform default | Override the enterprise/managed config dir (for testing/relocation). |
+| `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | unset | Claude Code's own switch; when `1` the Config row's auto-memory count reads `0`, matching what actually loads. |
 
 It also honors a few `~/.claude/settings.json` keys when present: `effortLevel`, `fastMode`,
-and the `statusLine.padding` / `statusLine.refreshInterval` shown above.
+`autoMemoryEnabled` / `autoMemoryDirectory` (any scope), and the `statusLine.padding` /
+`statusLine.refreshInterval` shown above.
 
 ## Customizing
 
 It's a single readable file — the top of `statusline.js` defines every color and Nerd Font
 glyph as a named constant, so swapping an icon or recoloring a widget is a one-line change. The
 extensive inline comments explain *why* each threshold, scope rule, and color was chosen.
+
+## Development
+
+`check.js` is the safety net for the rendering invariants that matter to your terminal (no line
+wider than the window, height capped at a third of it and never shrinking between renders, no
+whitespace-led or empty rows). It feeds fixture payloads to both scripts across a grid of
+terminal sizes, inside a sandboxed `HOME`/`TEMP` so nothing it does touches your real config or
+the live caches, and fails on the first violation. CI runs it on Linux, macOS, and Windows.
+
+```bash
+bun check.js                # assert the invariants
+bun check.js --show 60x24   # …and print one stripped render at that size to eyeball
+```
+
+For a quick look at a specific payload, pipe JSON straight in — Claude Code exports `COLUMNS`
+and `LINES`, so set them to the size you want to preview:
+
+```bash
+echo '{"session_id":"x","model":{"display_name":"Opus"},"cwd":"'"$PWD"'","cost":{},
+  "context_window":{"context_window_size":200000,"current_usage":{"input_tokens":50000}}}' \
+  | COLUMNS=120 LINES=40 bun statusline.js
+```
 
 ## License
 

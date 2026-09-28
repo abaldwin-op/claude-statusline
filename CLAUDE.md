@@ -12,12 +12,18 @@ dependencies, no build step.
 - `subagent-statusline.js` — the per-subagent row for Claude Code's agent panel
   (`subagentStatusLine` in settings). Same conventions, much smaller.
 - `install.js` — points `~/.claude/settings.json` at the scripts in this checkout (merges,
-  backs up first). `bun install.js --print` for a dry run.
+  backs up first). `bun install.js --print` for a dry run; `--uninstall` clears only blocks that
+  point at this checkout.
+- `check.js` — the invariant checker (see below). `.github/workflows/check.yml` runs it on
+  Linux/macOS/Windows.
 
 ## Running / verifying changes
 
-Requires **Bun** (`Bun.stdin` / `Bun.main`). There is no test suite. Verify by piping a sample
-payload:
+Requires **Bun** (`Bun.stdin` / `Bun.main`). Run `bun check.js` after any change to the packer,
+height budget, or output shape: it renders fixture payloads for both scripts across a grid of
+`COLUMNS`×`LINES` inside a sandboxed `HOME`/`TEMP` (no real config, no live caches, no network)
+and asserts the invariants below plus a "no data-less rows" rule. `--show 60x24` prints one
+stripped render. For a specific payload, pipe it in by hand:
 
 ```sh
 echo '{"session_id":"x","model":{"display_name":"Opus"},"cwd":"C:/some/repo","cost":{},
@@ -52,9 +58,11 @@ terminal, not just the aesthetics.
    conditionally omit a slot.
 2. **Lines must never exceed the terminal width.** CC counts logical lines; a terminal
    hard-wrap desyncs its repaint. `packSection` measures with `vlen` (visible width, ANSI- and
-   wide-glyph-aware) and degrades per item: widest alt → narrowest alt → wrap to a fresh row.
-   Width comes from `COLUMNS || stdout.columns || 80` — never a huge fallback (a `1e9` fallback
-   once corrupted the terminal).
+   wide-glyph-aware) and degrades per item: widest alt → narrowest alt → wrap to a fresh row →
+   truncate the narrow alt with `…` when even that overflows a row on its own (any alt count —
+   an unclipped over-wide item is exactly the hard-wrap this guards against). Width comes from
+   `COLUMNS || stdout.columns || 80` — never a huge fallback (a `1e9` fallback once corrupted
+   the terminal).
 3. **U+2800 (Braille blank), not spaces, for indentation and blank rows.** CC strips leading
    whitespace and trailing blank rows; U+2800 renders blank but isn't whitespace.
 4. **Never block the render on the network.** Slow data (OAuth usage API) is served from a
@@ -71,8 +79,12 @@ terminal, not just the aesthetics.
 - `packSection(label, segments, lead, leadWidth, preferDetail, maxRows)` does the layout:
   all-widest on one line → all-narrowest on one line (skipped when `preferDetail`) → greedy
   per-item wrap, cut with `…` when `maxRows` is hit (only the height-cap squeeze loop passes
-  `maxRows`). An empty segment list emits nothing (the slot backfills blank — rows like
-  Turn/Activity disappear after `/clear`).
+  `maxRows`). A finite `maxRows` flips the section into **squeeze mode**: items go narrow-first
+  and the all-narrow probe runs even for `preferDetail` sections, because under a row budget a
+  cut item is lost outright while a dropped bar or scope paren is only detail. The first item on
+  an empty row always tries its narrow form, then truncates in place, before any wrap/cut — a
+  row must never emit just its label and `…`. An empty segment list emits nothing (the slot
+  backfills blank — rows like Turn/Activity disappear after `/clear`).
 - Row **lead** glyphs render once before the first segment; pass the lead's true cell width —
   `vlen` guesses wrong for some glyphs in the user's terminal font.
 - Section labels pad to `SECTION_WIDTH` (8) and render bold-italic-SOFT.
@@ -103,6 +115,7 @@ PaceMetric). Kept to a few chars on purpose — the user wants it terse; don't e
 ## Workflow notes
 
 - Update the README row list when rows change — it enumerates every row in render order.
+- Run `bun check.js` before committing; a new row also means bumping `SECTIONS` in `check.js`.
 - Commit when a change is done and verified; **do not push without being asked.**
 - Test renders share the real `$TEMP/sl-*.json` caches — clean up anything you seed with fake
   data.
