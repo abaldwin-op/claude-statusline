@@ -13,8 +13,8 @@
 // `content` is rendered as-is, including ANSI colors and OSC 8 hyperlinks.
 // Docs: https://code.claude.com/docs/en/statusline#subagent-status-lines
 //
-// Configure in settings.json:
-//   { "subagentStatusLine": { "type": "command", "command": "~/.claude/subagent-statusline.js" } }
+// Configure in settings.json (or run `bun install.js`, which points at this checkout):
+//   { "subagentStatusLine": { "type": "command", "command": "bun \"/path/to/claude-statusline/subagent-statusline.js\"" } }
 
 const esc = "\x1b";
 const RESET = `${esc}[0m`;

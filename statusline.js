@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Cross-platform Claude Code status line. Run via: bun statusline-command.js
+// Cross-platform Claude Code status line. Run via: bun statusline.js (see install.js / README)
 import { spawnSync, spawn } from "node:child_process";
 import {
   closeSync,
@@ -456,6 +456,7 @@ function readRegManaged() {
     try {
       const r = spawnSync("reg", ["query", `${hive}\\SOFTWARE\\Policies\\ClaudeCode`, "/v", "Settings"], {
         encoding: "utf8",
+        windowsHide: true, // console child from a hidden process would flash a window
       });
       if (r.error || r.status !== 0 || !r.stdout) continue;
       const m = r.stdout.match(/\bSettings\b\s+REG_(?:SZ|EXPAND_SZ)\s+(.*)/);
@@ -1581,7 +1582,7 @@ function rlBlock(node, label, fmt, windowMs) {
 function readOauthToken() {
   try {
     if (process.platform === "darwin") {
-      const r = spawnSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], { encoding: "utf8" });
+      const r = spawnSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], { encoding: "utf8", windowsHide: true });
       if (!r.error && r.status === 0 && r.stdout) {
         return JSON.parse(r.stdout.trim())?.claudeAiOauth?.accessToken ?? null;
       }
@@ -2459,14 +2460,20 @@ function packSection(label, segments, lead = "", leadWidth = null, preferDetail 
     const total = vlen(prefix) + forms.reduce((w, f) => w + vlen(f), 0) + (forms.length - 1) * SEP.length;
     return total <= width ? prefix + forms.join(SEP) : null;
   };
+  // SQUEEZE mode (the height cap re-packing us with a finite maxRows): every row we can't fit is
+  // now CUT, not wrapped, so a cut item is lost outright. Under that budget the compact form wins
+  // for everyone — bars and scope parens are decorative, a dropped gauge is data loss — so items
+  // go narrow-first and the all-narrow one-line probe runs even for detail-preferring sections.
+  const squeeze = Number.isFinite(maxRows);
   const wideLine = fitsOneLine(items.map((it) => it.alts[0]));
   if (wideLine !== null) return [wideLine];
-  if (!preferDetail) {
+  if (!preferDetail || squeeze) {
     const narrowLine = fitsOneLine(items.map((it) => it.alts[it.alts.length - 1]));
     if (narrowLine !== null) return [narrowLine];
   }
 
-  // Greedy per-item: walk left-to-right, widest → narrowest on current row → wrap with widest.
+  // Greedy per-item: walk left-to-right, widest → narrowest on current row → wrap with widest
+  // (or narrow-first throughout when squeezing).
   const rows = [];
   let cur = prefix;
   let curLen = vlen(prefix);
@@ -2479,13 +2486,23 @@ function packSection(label, segments, lead = "", leadWidth = null, preferDetail 
     const wideLen = vlen(wide);
     const narrowLen = vlen(narrow);
     const sepLen = placed > 0 ? SEP.length : 0;
+    const first = squeeze ? narrow : wide; // preferred form on the current row
+    const firstLen = squeeze ? narrowLen : wideLen;
 
-    if (curLen + sepLen + wideLen <= width) {
-      cur += (placed > 0 ? SEP : "") + wide;
-      curLen += sepLen + wideLen;
-    } else if (placed > 0 && curLen + sepLen + narrowLen <= width) {
-      cur += SEP + narrow;
+    if (curLen + sepLen + firstLen <= width) {
+      cur += (placed > 0 ? SEP : "") + first;
+      curLen += sepLen + firstLen;
+    } else if (curLen + sepLen + narrowLen <= width) {
+      // (Also the FIRST item's path: an empty row must try the compact form before it wraps or
+      // cuts — otherwise a squeezed row could emit nothing but the label and an ellipsis.)
+      cur += (placed > 0 ? SEP : "") + narrow;
       curLen += sepLen + narrowLen;
+    } else if (placed === 0) {
+      // The row is still empty and even the compact form overflows: nothing to wrap away from, so
+      // truncate in place. Never wrap here — the wrap row would be identical to this one.
+      const form = truncateVisible(narrow, width - curLen);
+      cur += form;
+      curLen += vlen(form);
     } else {
       // Row budget spent → CUT instead of wrapping: end the current row with an ellipsis (the
       // " |" continuation marker would promise a next line that isn't coming) and drop the rest.
@@ -2493,22 +2510,21 @@ function packSection(label, segments, lead = "", leadWidth = null, preferDetail 
         if (curLen + 2 <= width) cur += ` ${SOFT}…${RESET}`;
         break;
       }
-      // Wrap. Place widest on the new row; only if widest itself overflows do we degrade — to
-      // narrow if it fits, else truncate (single-alt items only).
-      if (placed > 0) {
-        // Trailing " |" continuation marker on the finished line (dropping it silently reads as
-        // confusing). Skip if even the marker won't fit.
-        const marker = curLen + 2 <= width ? ` ${SOFT}|${RESET}` : "";
-        rows.push(cur + marker);
-      }
-      let form = wide;
-      let formLen = wideLen;
+      // Wrap. Trailing " |" continuation marker on the finished line (dropping it silently reads
+      // as confusing). Skip if even the marker won't fit.
+      const marker = curLen + 2 <= width ? ` ${SOFT}|${RESET}` : "";
+      rows.push(cur + marker);
+      // Place the preferred form on the new row; only if it overflows do we degrade — to narrow
+      // if that fits, else truncate the narrow form (whatever the alt count: an item wider than
+      // the terminal must never go out unclipped — that's the hard-wrap that desyncs CC's repaint).
+      let form = first;
+      let formLen = firstLen;
       if (indentWidth + formLen > width) {
         if (indentWidth + narrowLen <= width) {
           form = narrow;
           formLen = narrowLen;
-        } else if (it.alts.length === 1) {
-          form = truncateVisible(form, maxItemWidth);
+        } else {
+          form = truncateVisible(narrow, maxItemWidth);
           formLen = vlen(form);
         }
       }
